@@ -4,14 +4,20 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4 # 这里升到了 v4
+      - uses: actions/checkout@v4
       - uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
+      - run: |
+          # 这一行是重点：强制生成安卓工程环境
+          flutter create . --platforms android --project-name laoma_tingshu
+          # 即使你 main.dart 放错位置，这一行也会把它强行挪到正确的 lib 文件夹里
+          mkdir -p lib
+          cp main.dart lib/main.dart || true
       - run: flutter pub get
       - run: flutter build apk --release
       - name: Upload APK
-        uses: actions/upload-artifact@v4 # 关键：这里也升到了 v4
+        uses: actions/upload-artifact@v4
         with:
           name: LaoMaApp
           path: build/app/outputs/flutter-apk/app-release.apk
