@@ -1,7 +1,7 @@
 name: laoma_tingshu
-description: Real In-App Audio Book Search Engine
+description: Pro Audio Book App with Floating Player
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.1.0+2
 
 environment:
   sdk: '>=3.0.0 <4.0.0'
@@ -9,12 +9,13 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  # 关键：dio 用来发出网络请求，就像 App 的手一样去抓东西
   dio: ^5.1.1
-  # 关键：html 用来把抓回来的网页乱码“翻译”成 App 能看懂的资源列表
   html: ^0.15.3
-  # 关键：webview_flutter 用于最后展示具体的听书页面，但咱们不露浏览器界面
   webview_flutter: ^4.2.2
+  # 关键：用来存收藏夹和历史记录
+  shared_preferences: ^2.1.0 
+  # 关键：精美图标
+  cupertino_icons: ^1.0.5
 
 flutter:
   uses-material-design: true
