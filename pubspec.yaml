@@ -1,5 +1,5 @@
 name: laoma_tingshu
-description: Real Audio Book App
+description: In-App Browser for Audio Books
 publish_to: 'none'
 version: 1.0.0+1
 environment:
@@ -7,6 +7,7 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
-  url_launcher: ^6.1.11  # 关键：有了它才能跳到网页听书
+  # 关键：这个插件能让网页直接在 App 里面显示
+  webview_flutter: ^4.2.2 
 flutter:
   uses-material-design: true
