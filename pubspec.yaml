@@ -1,13 +1,20 @@
 name: laoma_tingshu
-description: In-App Browser for Audio Books
+description: Real In-App Audio Book Search Engine
 publish_to: 'none'
 version: 1.0.0+1
+
 environment:
   sdk: '>=3.0.0 <4.0.0'
+
 dependencies:
   flutter:
     sdk: flutter
-  # 关键：这个插件能让网页直接在 App 里面显示
-  webview_flutter: ^4.2.2 
+  # 关键：dio 用来发出网络请求，就像 App 的手一样去抓东西
+  dio: ^5.1.1
+  # 关键：html 用来把抓回来的网页乱码“翻译”成 App 能看懂的资源列表
+  html: ^0.15.3
+  # 关键：webview_flutter 用于最后展示具体的听书页面，但咱们不露浏览器界面
+  webview_flutter: ^4.2.2
+
 flutter:
   uses-material-design: true
