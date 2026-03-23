@@ -1,188 +1,210 @@
 import 'package:flutter/material.dart';
-import 'package:dio/dio.dart'; // 引入网络请求功能
-import 'package:html/parser.dart' show parse; // 引入网页解析功能
-import 'package:webview_flutter/webview_flutter.dart'; // 引入内置网页功能（最后展示资源用）
+import 'package:webview_flutter/webview_flutter.dart';
+import 'package:dio/dio.dart';
+import 'package:html/parser.dart' show parse;
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() => runApp(MaterialApp(
   debugShowCheckedModeBanner: false,
-  theme: ThemeData.light().copyWith(primaryColor: Colors.green),
-  home: LaoMaHome(),
+  theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.green),
+  home: LaoMaProApp(),
 ));
 
-class LaoMaHome extends StatefulWidget {
+class LaoMaProApp extends StatefulWidget {
   @override
-  _LaoMaHomeState createState() => _LaoMaHomeState();
+  _LaoMaProAppState createState() => _LaoMaProAppState();
 }
 
-class _LaoMaHomeState extends State<LaoMaHome> {
-  final TextEditingController _inputController = TextEditingController();
-  List<Map<String, String>> _searchResults = []; // 存储搜索结果
-  bool _isLoading = false; // 是否正在加载
+class _LaoMaProAppState extends State<LaoMaProApp> {
+  final TextEditingController _input = TextEditingController();
+  List<Map<String, String>> _results = [];
+  List<String> _favorites = []; // 收藏夹
+  bool _isSearching = false;
+  String? _currentTitle; // 当前正在听的书名
+  String? _currentUrl; // 当前播放页面地址
+  WebViewController? _webController;
 
   @override
   void initState() {
     super.initState();
+    _loadFavorites();
   }
 
-  // --- 核心逻辑：悄悄去后台搜百度，把干净的资源“抠”出来 ---
-  Future<void> _searchAudioBook(String bookName) async {
-    setState(() {
-      _isLoading = true;
-      _searchResults = []; // 清空之前的搜索结果
-    });
+  // 加载本地收藏
+  _loadFavorites() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() => _favorites = prefs.getStringList('favs') ?? []);
+  }
 
+  // 保存收藏
+  _toggleFav(String title) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (_favorites.contains(title)) _favorites.remove(title);
+    else _favorites.add(title);
+    await prefs.setStringList('favs', _favorites);
+    setState(() {});
+  }
+
+  // 大厂级去广告搜索逻辑
+  Future<void> _proSearch(String key) async {
+    setState(() => _isSearching = true);
     try {
-      final dio = Dio();
-      // 这里我悄悄设置了浏览器的头，防止被百度反爬虫
-      dio.options.headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      };
-      
-      // 核心：请求百度的听书资源
-      final response = await dio.get("https://www.baidu.com/s?wd=$bookName 听书");
-      
-      if (response.statusCode == 200) {
-        final document = parse(response.data);
-        // 这是关键步骤：悄悄解析网页内容，抠出“资源标题”和“链接”
-        final results = document.querySelectorAll('div.result.c-container');
-
-        final searchList = <Map<String, String>>[];
-        for (final result in results) {
-          final title = result.querySelector('h3.t > a')?.text ?? '';
-          final url = result.querySelector('h3.t > a')?.attributes['href'] ?? '';
-          if (title.isNotEmpty && url.isNotEmpty) {
-            searchList.add({'title': title, 'url': url});
-          }
-        }
-        
-        setState(() {
-          _searchResults = searchList;
-        });
-      }
-    } catch (e) {
-      print('搜书出错了: $e');
+      final res = await Dio().get("https://www.baidu.com/s?wd=$key 听书");
+      final doc = parse(res.data);
+      final items = doc.querySelectorAll('div.result.c-container');
+      _results = items.map((e) => {
+        'title': e.querySelector('h3.t > a')?.text ?? '',
+        'url': e.querySelector('h3.t > a')?.attributes['href'] ?? '',
+      }).where((m) => m['title']!.isNotEmpty).toList();
     } finally {
-      setState(() {
-        _isLoading = false; // 加载完成
-      });
+      setState(() => _isSearching = false);
     }
   }
 
-  // 最后直达资源页面，在 App 内部开，不露浏览器壳子
-  late final WebViewController _webController;
-  void _openPage(String url) {
+  // 纯净播放页：注入 JS 屏蔽网页广告
+  void _openPlayer(String title, String url) {
+    setState(() {
+      _currentTitle = title;
+      _currentUrl = url;
+    });
+    
     _webController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(const Color(0x00000000))
+      ..setNavigationDelegate(NavigationDelegate(
+        onPageFinished: (url) {
+          // 核心：大厂黑科技，自动清理网页里的广告元素和弹窗
+          _webController?.runJavaScript("""
+            document.querySelectorAll('.ad, .banner, .download-btn, #footer').forEach(e => e.remove());
+            console.log('广告已清理');
+          """);
+        },
+      ))
       ..loadRequest(Uri.parse(url));
 
-    Navigator.of(context).push(
-      MaterialBar(
-        builder: (context) => Scaffold(
-          appBar: AppBar(title: Text('老马听书'), centerTitle: true, backgroundColor: Colors.white, foregroundColor: Colors.green, elevation: 1,),
-          body: WebViewWidget(controller: _webController),
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        height: MediaQuery.of(context).size.height * 0.85,
+        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+        child: Column(
+          children: [
+            Container(margin: EdgeInsets.all(12), width: 40, height: 5, decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(10))),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 20),
+              child: Row(
+                children: [
+                  Expanded(child: Text(title, style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold), overflow: TextOverflow.ellipsis)),
+                  IconButton(icon: Icon(_favorites.contains(title) ? Icons.favorite : Icons.favorite_border, color: Colors.red), onPressed: () => _toggleFav(title)),
+                ],
+              ),
+            ),
+            Expanded(child: WebViewWidget(controller: _webController!)),
+          ],
         ),
-      )
+      ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: Text('老马听书', style: TextStyle(color: Colors.green[800], fontWeight: FontWeight.bold)), backgroundColor: Colors.white, elevation: 1, centerTitle: true,),
-      body: Column(
+      backgroundColor: Color(0xFFF8F9FA),
+      appBar: AppBar(title: Text('老马听书 Pro', style: TextStyle(fontWeight: FontWeight.w900)), centerTitle: true, elevation: 0, backgroundColor: Colors.white),
+      body: Stack(
         children: [
-          // 首页固定：广告 + 搜索框
-          _buildHomeHeader(),
-          
-          // 下半部分：根据状态显示（加载中、结果列表、精品推荐）
-          Expanded(
-            child: _isLoading ? _buildLoading() : (_searchResults.isNotEmpty ? _buildSearchResultsList() : _build精品推荐()),
-          ),
-        ],
-      ),
-    );
-  }
+          CustomScrollView(
+            slivers: [
+              // 头部搜索区
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: EdgeInsets.all(20),
+                  child: Column(
+                    children: [
+                      Container(
+                        padding: EdgeInsets.all(15),
+                        width: double.infinity,
+                        decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.green[400]!, Colors.green[700]!]), borderRadius: BorderRadius.circular(15)),
+                        child: Text("老马私藏：全网资源·纯净直达\nV: q13978984", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                      ),
+                      SizedBox(height: 20),
+                      TextField(
+                        controller: _input,
+                        decoration: InputDecoration(
+                          hintText: "搜书名、作者...",
+                          prefixIcon: Icon(Icons.search),
+                          filled: true, fillColor: Colors.white,
+                          border: OutlineInputBorder(borderRadius: BorderRadius.circular(15), borderSide: BorderSide.none),
+                          suffixIcon: IconButton(icon: Icon(Icons.send), onPressed: () => _proSearch(_input.text)),
+                        ),
+                        onSubmitted: _proSearch,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              
+              // 收藏夹区域
+              if (_results.isEmpty && _favorites.isNotEmpty)
+                SliverToBoxAdapter(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 20),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text("我的书架", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+                        SizedBox(height: 10),
+                        Wrap(spacing: 10, children: _favorites.map((f) => ActionChip(label: Text(f), onPressed: () => _proSearch(f))).toList()),
+                      ],
+                    ),
+                  ),
+                ),
 
-  // 首页：广告 + 搜索框
-  Widget _buildHomeHeader() {
-    return Container(
-      padding: EdgeInsets.all(20),
-      child: Column(
-        children: [
-          Container(
-            padding: EdgeInsets.all(15),
-            decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(12)),
-            child: Text("主打分享：MAKE老马\nV：q13978984", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.green[800])),
+              // 搜索结果
+              _isSearching 
+                ? SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
+                : SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) => Card(
+                        margin: EdgeInsets.symmetric(horizontal: 20, vertical: 5),
+                        elevation: 0, color: Colors.white,
+                        child: ListTile(
+                          leading: Container(width: 45, height: 45, decoration: BoxDecoration(color: Colors.green[50], borderRadius: BorderRadius.circular(8)), child: Icon(Icons.menu_book, color: Colors.green)),
+                          title: Text(_results[index]['title']!, style: TextStyle(fontWeight: FontWeight.bold), maxLines: 1),
+                          subtitle: Text("点击进入纯净播放模式"),
+                          trailing: Icon(Icons.play_arrow_rounded, size: 30, color: Colors.green),
+                          onTap: () => _openPlayer(_results[index]['title']!, _results[index]['url']!),
+                        ),
+                      ),
+                      childCount: _results.length,
+                    ),
+                  ),
+            ],
           ),
-          SizedBox(height: 25),
           
-          // --- 搜索框：回车直接在 App 内悄悄全网搜 ---
-          TextField(
-            controller: _inputController,
-            textInputAction: TextInputAction.search,
-            decoration: InputDecoration(
-              hintText: '输入书名，App 内自家搜索引擎...',
-              prefixIcon: Icon(Icons.search, color: Colors.green),
-              filled: true,
-              fillColor: Color(0xFFF5F5F5),
-              border: OutlineInputBorder(borderRadius: BorderRadius.circular(30), borderSide: BorderSide.none),
+          // 大厂级底部迷你控制条
+          if (_currentTitle != null)
+            Positioned(
+              bottom: 20, left: 20, right: 20,
+              child: GestureDetector(
+                onTap: () => _openPlayer(_currentTitle!, _currentUrl!),
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                  decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(40), boxShadow: [BoxShadow(blurRadius: 10, color: Colors.black26)]),
+                  child: Row(
+                    children: [
+                      Icon(Icons.music_note, color: Colors.green),
+                      SizedBox(width: 10),
+                      Expanded(child: Text("正在听：$_currentTitle", style: TextStyle(color: Colors.white), overflow: TextOverflow.ellipsis)),
+                      Icon(Icons.pause_circle_filled, color: Colors.white, size: 35),
+                    ],
+                  ),
+                ),
+              ),
             ),
-            onSubmitted: (value) {
-              if (value.isNotEmpty) {
-                _searchAudioBook(value); // 核心：调用自家的搜索引擎大脑
-              }
-            },
-          ),
         ],
       ),
-    );
-  }
-
-  // 加载中界面：没有任何进度条，只有转圈圈图标
-  Widget _buildLoading() {
-    return Center(child: CircularProgressIndicator(color: Colors.green));
-  }
-
-  // --- 真正的美观、纯净搜索结果列表 ---
-  Widget _buildSearchResultsList() {
-    return ListView.separated(
-      padding: EdgeInsets.symmetric(horizontal: 20),
-      itemCount: _searchResults.length,
-      separatorBuilder: (context, index) => Divider(color: Colors.grey[200]), // 干净的分隔线
-      itemBuilder: (context, index) {
-        final result = _searchResults[index];
-        return ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.language, color: Colors.green),
-          title: Text(result['title']!, maxLines: 2, overflow: TextOverflow.ellipsis, style: TextStyle(fontWeight: FontWeight.bold, color: Colors.green[900])),
-          trailing: Icon(Icons.chevron_right, color: Colors.green),
-          onTap: () => _openPage(result['url']!), // 点击后秒开资源，没有任何浏览器界面
-        );
-      },
-    );
-  }
-
-  // 默认：精品推荐 (点击直达)
-  Widget _build精品推荐() {
-    return ListView(
-      padding: EdgeInsets.symmetric(horizontal: 20),
-      children: [
-        SizedBox(height: 10),
-        Text("精品推荐 (App 内自家美观界面)", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-        _bookItem("大奉打更人", "https://m.ting78.com/"),
-        _bookItem("书音FM", "https://m.shuyinfm.com/"),
-        _bookItem("听书168", "https://m.tingshu168.com/"),
-      ],
-    );
-  }
-
-  Widget _bookItem(String title, String url) {
-    return ListTile(
-      leading: Icon(Icons.play_circle_fill, color: Colors.green),
-      title: Text(title, style: TextStyle(fontWeight: FontWeight.bold)),
-      trailing: Icon(Icons.chevron_right),
-      onTap: () => _openPage(url),
     );
   }
 }
